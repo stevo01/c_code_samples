@@ -1,13 +1,17 @@
 /*
- ============================================================================
+============================================================================
  Name        : RawSocketSample.c
  Author      : Steffen Volkmann
  Version     :
  Copyright   : 
  Description : This application demonstrates the usage of raw socket
  network interface.
- ============================================================================
- */
+
+ bookmarks:
+ http://plasmixs.github.io/raw-sockets-programming-in-c.html
+
+============================================================================
+*/
 
 /*system includes*/
 #include <arpa/inet.h>
@@ -26,26 +30,17 @@
 #define ETHER_TYPE_HCI_TP 0xF000
 
 static char TxBuff[MAX_PACK_SIZE];
-static struct sockaddr_ll socket_address;
 
 static int rawsocket_open(char *ifName, u_int8_t *pDst) {
-	printf("open socket interface");
+	printf("open socket interface %s", ifName);
 
 	int txsockfd = -1;
-	struct ifreq if_idx;
 	struct ifreq if_mac;
+	static struct sockaddr_ll socket_address;
 
 	// open socket interface
-	if ((txsockfd = socket(AF_PACKET, SOCK_RAW, IPPROTO_RAW)) == -1) {
+	if ((txsockfd = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL))) == -1) {
 		perror("socket");
-		return -1;
-	}
-
-	/* Get the index of the interface to send on */
-	memset(&if_idx, 0, sizeof(struct ifreq));
-	strncpy(if_idx.ifr_name, ifName, (IFNAMSIZ - 1));
-	if (ioctl(txsockfd, SIOCGIFINDEX, &if_idx) < 0) {
-		perror("SIOCGIFINDEX");
 		return -1;
 	}
 
@@ -67,14 +62,27 @@ static int rawsocket_open(char *ifName, u_int8_t *pDst) {
 	eth_header->ether_shost[4] = ((uint8_t *) &if_mac.ifr_hwaddr.sa_data)[4];
 	eth_header->ether_shost[5] = ((uint8_t *) &if_mac.ifr_hwaddr.sa_data)[5];
 	memcpy(eth_header->ether_dhost, pDst, 6);
-	eth_header->ether_type = htons(ETHER_TYPE_HCI_TP /*ETH_P_IP*/); /* Ethertype field */
+	eth_header->ether_type = htons(ETHER_TYPE_HCI_TP); /* Ethertype field  e.g. ETH_P_IP */
 
-	/* Index of the network device */
-	socket_address.sll_ifindex = if_idx.ifr_ifindex;
-	/* Address length*/
-	socket_address.sll_halen = ETH_ALEN;
-	/* Destination MAC */
-	memcpy(socket_address.sll_addr, pDst, 6);
+
+	memset(&socket_address, 0, sizeof(socket_address));
+	socket_address.sll_family = PF_PACKET;
+	socket_address.sll_ifindex = if_nametoindex(ifName);
+	socket_address.sll_protocol = htons(ETH_P_ALL);
+
+
+	unsigned short	sll_hatype;
+	unsigned char	sll_pkttype;
+	unsigned char	sll_halen;
+	unsigned char	sll_addr[8];
+
+
+
+	if (bind(txsockfd, (struct sockaddr*) &socket_address,
+			sizeof(socket_address)) < 0) {
+		perror("Bind");
+		return -1;
+	}
 
 	return txsockfd;
 }
@@ -89,11 +97,12 @@ static void rawsocket_send(int txsockfd, u_int8_t* data, u_int32_t len) {
 	len += sizeof(struct ether_header);
 
 	/* Send packet */
-	if (sendto(txsockfd, TxBuff, len, 0, (struct sockaddr*) &socket_address,
-			sizeof(struct sockaddr_ll)) < 0) {
+	if (send(txsockfd, TxBuff, len, 0) < 0) {
 		printf("sendto failed len=%d\n", len);
 		perror("Send failed");
 	}
+
+	printf("send package with %d bytes\n", len);
 
 	return;
 }
@@ -103,8 +112,14 @@ int main(int argc, char *argv[]) {
 	int txsockfd;
 	char *ifname;
 	int idx;
-	u_int8_t Dst[6] = { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06 };
-	u_int8_t sample_data[5] = { 0x01, 0x01, 0x23, 0x23, 0x23 };
+
+
+	u_int8_t Dst[6] = { 0x90, 0x1b, 0x0e, 0xa4, 0x01, 0x5e };
+	u_int8_t sample_data[255];
+
+	for (idx = 0; idx < 255; idx++) {
+		sample_data[idx] = idx;
+	}
 
 	if (argc == 2) {
 		ifname = argv[1];
@@ -125,8 +140,8 @@ int main(int argc, char *argv[]) {
 
 	if (txsockfd != -1) {
 		printf("opening the socket %s was successful\n", ifname);
-		for (idx = 0; idx < 100; idx++) {
-			rawsocket_send(txsockfd, sample_data, sizeof(sample_data));
+		for (idx = 1; idx < 200; idx++) {
+			rawsocket_send(txsockfd, sample_data, idx);
 		}
 	} else {
 		printf("opening the socket %s was faulty\n", ifname);
